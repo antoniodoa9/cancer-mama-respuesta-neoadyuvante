@@ -1,0 +1,5 @@
+*.rds
+rsconnect/
+*.xlsx
+.Rhistory
+.RData
