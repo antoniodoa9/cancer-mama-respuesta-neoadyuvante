@@ -1,0 +1,1220 @@
+---
+title: "IMPACTO DEL USO DE ANTIBIÓTICOS EN LA RESPUESTA AL TRATAMIENTO NEOADYUVANTE EN CÁNCER DE MAMA"
+author: "Antonio Sánchez Doña"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    toc-title: "Índice"
+    number-sections: true
+    theme: litera
+    code-overflow: wrap
+    code-fold: show
+    code-summary: "Desplegar código R"
+    df-print: paged
+    fig-width: 9
+    fig-height: 6
+    fig-align: center
+    embed-resources: true
+execute:
+  echo: true
+  code-fold: true
+  warning: false
+  message: false
+  cache: true
+editor: visual
+---
+
+# Introducción y carga de datos
+
+Este informe analiza si el uso de antibióticos durante la quimioterapia afecta a la Respuesta Patológica Completa (RCP) en pacientes con cáncer de mama. Para ello nos basamos en la hipótesis de que la alteración de la microbiota puede influir en la eficacia del tratamiento.
+
+Cargamos las librerías que necesitamos.
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(mice)
+
+```
+
+```{r}
+library(readxl)
+file_path <- 'datos/muestra_700_UGC_perdidos.xlsx'  # los datos no se publican (ver README)
+datos_raw <- read_excel(file_path)
+```
+
+# Análisis univariante
+
+## Variables numéricas
+
+Antes de proceder con la limpieza realizamos un primer análisis de las variables para ver cómo se distribuyen los datos y detectar posibles anomalías como los 999. Para las variables numéricas:
+
+```{r}
+summary(datos_raw$EDAD_DIAGNOSTICO)
+summary(datos_raw$TAMAÑO)
+summary(datos_raw$Ki67)
+summary(datos_raw$Nx)
+summary(datos_raw$RE)
+summary(datos_raw$RP)
+summary(datos_raw$No_ANTIBIOTICOS)
+```
+
+## Variables categóricas
+
+Para las variables categóricas, analizamos su distribución mediante tablas de frecuencias absolutas y, en algunos casos relevantes, frecuencias relativas:
+
+```{r}
+# Frecuencias absolutas, de variables categóricas
+table(datos_raw$ESTADO_MENOPAUSICO)
+table(datos_raw$HISTOLOGIA)
+table(datos_raw$GRADO)
+table(datos_raw$ESTADIO)
+table(datos_raw$FENOTIPO_IHQ)
+table(datos_raw$TIPO_CIRUGIA)
+table(datos_raw$TIPO_QT_NEOADY_OK)
+table(datos_raw$ANTIBIOTICO)
+
+# Ejemplo de frecuencias relativas, (en porcentaje) 
+round(prop.table(table(datos_raw$ESTADIO)) * 100, 1)
+round(prop.table(table(datos_raw$GRADO)) * 100, 1)
+```
+
+Observamos claramente en ambos chunks la presencia de etiquetas "Desconocido" y valores atípicos como los 999 que debemos tratar.
+
+# Limpieza e imputación de datos
+
+Creamos copia para la limpieza. Pasamos los 999 a NA y filtramos los outliers. También ponemos la etiqueta Desconocido como NA:
+
+```{r}
+datos_clean <- datos_raw
+
+# Valores atípicos a NA
+datos_clean$EDAD_DIAGNOSTICO[datos_clean$EDAD_DIAGNOSTICO == 999] <- NA
+datos_clean$TAMAÑO[datos_clean$TAMAÑO == 999] <- NA
+datos_clean$Nx[datos_clean$Nx == 999] <- NA
+
+# Desconocidos a NA
+datos_clean$ESTADO_MENOPAUSICO[datos_clean$ESTADO_MENOPAUSICO == "Desconocido"] <- NA
+datos_clean$HISTOLOGIA[datos_clean$HISTOLOGIA == "Desconocido"] <- NA
+datos_clean$GRADO[datos_clean$GRADO == "Desconocido"] <- NA
+datos_clean$FENOTIPO_IHQ[datos_clean$FENOTIPO_IHQ == "Desconocido"] <- NA
+datos_clean$TIPO_CIRUGIA[datos_clean$TIPO_CIRUGIA == "Desconocido"] <- NA
+datos_clean$TIPO_QT_NEOADY_OK[datos_clean$TIPO_QT_NEOADY_OK == "Desconocido"] <- NA
+datos_clean$HT_ADY_OK[datos_clean$HT_ADY_OK == "Desconocido"] <- NA
+datos_clean$RETRASOS[datos_clean$RETRASOS == "Desconocido"] <- NA
+
+# Filtro de outliers
+datos_clean$TAMAÑO[datos_clean$TAMAÑO >= 10] <- NA
+
+# Corrección de tipos
+datos_clean$ESTADIO <- as.factor(datos_clean$ESTADIO)
+
+```
+
+Como eliminar los registros con valores faltantes nos haría perder mucha información, hacemos imputación múltiple con PMM , usando la librería mice:
+
+```{r}
+# Quitamos las fechas temporalmente y pasamos los textos a factor
+datos_para_imputar <- datos_clean %>%
+  dplyr::select(-FECHA_DIAGNOSTICO, -FECHA_INICIO_QT, -FECHA_ULTIMO_CONTROL) %>%
+  mutate_if(is.character, as.factor)
+
+# Imputación de datos faltantes
+set.seed(123) # Fijamos semilla para reproducibilidad
+imputados <- mice(datos_para_imputar, method = "pmm", m = 5, printFlag = FALSE)
+datos_completos_temp <- complete(imputados)
+
+# Volvemos a nuestro dataset original y sustituimos solo las variables que tenían NA
+datos_completos <- datos_clean
+datos_completos$EDAD_DIAGNOSTICO <- datos_completos_temp$EDAD_DIAGNOSTICO
+datos_completos$TAMAÑO <- datos_completos_temp$TAMAÑO
+datos_completos$Nx <- datos_completos_temp$Nx
+datos_completos$ESTADO_MENOPAUSICO <- as.character(datos_completos_temp$ESTADO_MENOPAUSICO)
+datos_completos$HISTOLOGIA <- as.character(datos_completos_temp$HISTOLOGIA)
+datos_completos$GRADO <- as.character(datos_completos_temp$GRADO)
+datos_completos$FENOTIPO_IHQ <- as.character(datos_completos_temp$FENOTIPO_IHQ)
+datos_completos$TIPO_CIRUGIA <- as.character(datos_completos_temp$TIPO_CIRUGIA)
+datos_completos$TIPO_QT_NEOADY_OK <- as.character(datos_completos_temp$TIPO_QT_NEOADY_OK)
+datos_completos$HT_ADY_OK <- as.character(datos_completos_temp$HT_ADY_OK)
+datos_completos$RETRASOS <- as.character(datos_completos_temp$RETRASOS)
+```
+
+# Recodificación y discretización
+
+Ahora que ya tenemos el dataset imputado, llamado datos_completos, ahora hacemos las agrupaciones de categorías y la discretización de la edad usando las funciones vistas en clase
+
+```{r}
+datos_modelo <- datos_completos %>%
+  mutate(
+    EDAD_CAT = cut(
+      EDAD_DIAGNOSTICO, 
+      breaks = c(0, 25, 50, Inf), 
+      labels = c("<25", "25-49", ">=50"), 
+      right = FALSE
+    ),
+    
+    GRADO_CAT = case_when(
+      GRADO %in% c("1", "2") ~ "1/2",
+      GRADO == "3" ~ "3",
+      TRUE ~ as.character(GRADO)
+    ) %>% as.factor(),
+    
+    HISTOLOGIA_CAT = case_when(
+      HISTOLOGIA == "DUCTAL" ~ "DUCTAL",
+      !is.na(HISTOLOGIA) ~ "NO DUCTAL"
+    ) %>% as.factor(),
+    
+    ESTADIO_CAT = case_when(
+      ESTADIO %in% c("I", "IA", "IB") ~ "I",
+      ESTADIO %in% c("IIA", "IIB") ~ "II",
+      ESTADIO %in% c("IIIA", "IIIB", "IIIC") ~ "III",
+      ESTADIO == "IV" ~ "IV",
+      TRUE ~ as.character(ESTADIO)
+    ) %>% as.factor(),
+    
+    FENOTIPO_CAT = case_when(
+      FENOTIPO_IHQ %in% c("LUMINAL A", "LUMINAL B") ~ "LUMINAL",
+      FENOTIPO_IHQ %in% c("LUMINAL-HER2", "HER2") ~ "HER2",
+      !is.na(FENOTIPO_IHQ) ~ "TRIPLE NEGATIVO"
+    ) %>% as.factor(),
+    
+    RCP = case_when(
+      RCB %in% c("RCB-0", "RCB-I") ~ "SI",
+      RCB %in% c("RCB-II", "RCB-III") ~ "NO",
+      TRUE ~ as.character(RCB)
+    ) %>% as.factor(),
+    
+    QT_CAT = case_when(
+      TIPO_QT_NEOADY_OK %in% c("ANTRACICLINAS", "ANTRACICLINAS-TAXANOS", "ANTRACICLINAS-TAXANOS-PLATINOS", "TAXANOS") ~ "NO antiHER2",
+      TIPO_QT_NEOADY_OK %in% c("QUIMIOTERAPIA-ANTIHER2", "ANTIHER2", "QUIMIOTERAPIA-ANTIHER2DOBLE") ~ "antiHER2",
+      TIPO_QT_NEOADY_OK %in% c("QUIMIOTERAPIA-ANTIHER2-INMUNOTERAPIA", "QUIMIOTERAPIA-INMUNOTERAPIA") ~ "INMUNO"
+    ) %>% as.factor(),
+    
+    No_ANTIBIOTICOS_CAT = case_when(
+      No_ANTIBIOTICOS <= 2 ~ "Dos veces o menos",
+      No_ANTIBIOTICOS > 2 ~ "Más de dos veces"
+    ) %>% as.factor(),
+    
+    Ki67_CAT = case_when(
+      Ki67 <= 14 ~ "<=14",
+      Ki67 > 14 ~ ">14"
+    ) %>% as.factor(),
+    
+    RE_CAT = case_when(
+      RE > 0 ~ "Positivo",
+      RE == 0 ~ "Negativo"
+    ) %>% as.factor(),
+    
+    RP_CAT = case_when(
+      RP > 0 ~ "Positivo",
+      RP == 0 ~ "Negativo"
+    ) %>% as.factor(),
+    
+    HER2_CAT = case_when(
+      grepl("P", HER2) ~ "Positivo",
+      grepl("N", HER2) ~ "Negativo"
+    ) %>% as.factor()
+  )
+# Establecemos LUMINAL como primera categoría (referencia) para después en el análisis multivariante
+datos_modelo$FENOTIPO_CAT <- factor(datos_modelo$FENOTIPO_CAT, 
+                                    levels = c("LUMINAL", "HER2", "TRIPLE NEGATIVO"))
+summary(datos_modelo)
+```
+
+# Exploración visual
+
+```{r, message=FALSE, warning=FALSE}
+p_edad <- ggplot(datos_modelo, aes(x = EDAD_CAT, fill = EDAD_CAT)) + 
+  geom_bar() + theme_minimal() + theme(legend.position = "none") + labs(x = "Edad (Intervalos)")
+
+p_tamano <- ggplot(datos_modelo, aes(y = TAMAÑO)) + 
+  geom_boxplot(fill = "lightgreen") + theme_minimal() + labs(y = "Tamaño tumoral (cm)")
+
+p_rcp <- ggplot(datos_modelo, aes(x = RCP, fill = RCP)) + 
+  geom_bar() + theme_minimal() + theme(legend.position = "none")
+
+p_estadio <- ggplot(datos_modelo, aes(x = ESTADIO_CAT, fill = ESTADIO_CAT)) + 
+  geom_bar() + theme_minimal() + theme(legend.position = "none")
+
+(p_edad | p_tamano) / (p_estadio | p_rcp)
+```
+
+# Análisis bivariante
+
+## Relación con variables categóricas
+
+Análisis bivariante: miramos a ver si las variables tienen relación entre sí:
+
+```{r}
+
+table(datos_modelo$ANTIBIOTICO, datos_modelo$GRADO_CAT)
+round(prop.table(table(datos_modelo$ANTIBIOTICO, datos_modelo$GRADO_CAT), margin = 1)*100,1)
+chisq.test(table(datos_modelo$ANTIBIOTICO, datos_modelo$GRADO_CAT))
+datos_modelo %>%
+  filter(!is.na(GRADO_CAT) & !is.na(ANTIBIOTICO)) %>%
+  ggplot(aes(x = ANTIBIOTICO, fill = GRADO_CAT)) + 
+  geom_bar(position = "fill") + 
+  labs(y = "Proporción", x = "ANTIBIOTICO", fill = "GRADO") +
+  theme_minimal()
+```
+
+El test nos da un p-valor de 0.2609, lo que significa que no hay diferencias en la toma de antibióticos según el grado del tumor. Las variables son independientes.
+
+Investigamos la relación entre la variable RCP y las distintas variables categóricas. Análisis bivariante entre RCP y ANTIBIOTICO:
+
+```{r}
+table(datos_modelo$ANTIBIOTICO, datos_modelo$RCP)
+round(prop.table(table(datos_modelo$ANTIBIOTICO, datos_modelo$RCP), margin = 1)*100, 1)
+chisq.test(table(datos_modelo$ANTIBIOTICO, datos_modelo$RCP))
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(ANTIBIOTICO)) %>%
+  ggplot(aes(x = ANTIBIOTICO, fill = RCP)) +
+  geom_bar(position = "fill", color = "black") +
+  labs(y = "Proporción", x = "Uso de antibióticos", fill = "RCP") +
+  theme_minimal()
+```
+
+Este test nos da un p-valor de 0.01095. Las pacientes que NO tomaron antibióticos lograron una RCP en el 48.1% de los casos, frente a solo un 38% en las que SÍ tomaron antibióticos. Esto respalda nuestra hipótesis inicial de que los antibióticos podría afectar negativamente a la efectividad de la quimioterapia.
+
+Análisis bivariante entre RCP y estadío del tumor:
+
+```{r}
+table(datos_modelo$ESTADIO_CAT, datos_modelo$RCP)
+round(prop.table(table(datos_modelo$ESTADIO_CAT, datos_modelo$RCP), margin = 1)*100, 1)
+chisq.test(table(datos_modelo$ESTADIO_CAT, datos_modelo$RCP))
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(ESTADIO_CAT)) %>%
+  ggplot(aes(x = ESTADIO_CAT, fill = RCP)) +
+  geom_bar(position = "fill", color = "black") +
+  labs(y = "Proporción", x = "Estadio", fill = "RCP") +
+  theme_minimal()
+```
+
+Este test nos da un p-valor de 0.007358. Como era de esperar, los tumores en estadios más tempranos consiguen mayor tasa de RCP (66.7%) en comparación con estadios avanzados (38.2%).
+
+Análisis bivariante entre RCP y fenotipo:
+
+```{r}
+table(datos_modelo$FENOTIPO_CAT, datos_modelo$RCP)
+round(prop.table(table(datos_modelo$FENOTIPO_CAT, datos_modelo$RCP), margin = 1)*100, 1)
+chisq.test(table(datos_modelo$FENOTIPO_CAT, datos_modelo$RCP))
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(FENOTIPO_CAT)) %>%
+  ggplot(aes(x = FENOTIPO_CAT, fill = RCP)) +
+  geom_bar(position = "fill", color = "black") +
+  labs(y = "Proporción", x = "Fenotipo", fill = "RCP") +
+  theme_minimal()
+```
+
+Análisis bivariante entre RCP y grado:
+
+```{r}
+table(datos_modelo$GRADO_CAT, datos_modelo$RCP)
+round(prop.table(table(datos_modelo$GRADO_CAT, datos_modelo$RCP), margin = 1)*100, 1)
+chisq.test(table(datos_modelo$GRADO_CAT, datos_modelo$RCP))
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(GRADO_CAT)) %>%
+  ggplot(aes(x = GRADO_CAT, fill = RCP)) +
+  geom_bar(position = "fill", color = "black") +
+  labs(y = "Proporción", x = "Grado", fill = "RCP") +
+  theme_minimal()
+```
+
+Vemos que tanto el fenotipo (p \<2.2e-16) como el grado del tumor (p = 0.00288) muestran una fuerte relación con la probabilidad de alcanzar la RCP. Por un lado, los tumores de fenotipo HER2 (62%) y TRIPLE NEGATIVO (49.7%) responden mucho mejor al tratamiento que los de tipo LUMINAL (20.2%). Por otro lado, los tumores de grado mayor (grado 3) presentan una RCP superior (49.5%) frente a los de grado 1/2 (38%).
+
+## Relación con variables numéricas
+
+Ahora vamos a estudiar si existe relación entre la variable objetivo (RCP) y las variables numéricas antes de discretizarlas. Primero comprobamos la normalidad de estas variables (Tamaño y Edad) usando el test de Shapiro-Wilk para saber qué prueba estadística aplicar.
+
+```{r}
+shapiro.test(datos_modelo$TAMAÑO)
+shapiro.test(datos_modelo$EDAD_DIAGNOSTICO)
+```
+
+Ambos p-valores son mucho menores de 0.05, por lo que rechazamos la hipótesis nula. Por tanto, para comparar las medias entre los dos grupos de RCP usaremos un test no paramétrico, el test de Wilcoxon, en lugar del test de Student.
+
+### Relación entre el Tamaño del tumor y la RCP
+
+```{r}
+summary(datos_modelo$TAMAÑO[datos_modelo$RCP == "SI"])
+summary(datos_modelo$TAMAÑO[datos_modelo$RCP == "NO"])
+
+wilcox.test(TAMAÑO ~ RCP, data = datos_modelo)
+
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(TAMAÑO)) %>%
+  ggplot(aes(x = RCP, y = TAMAÑO, fill = RCP)) +
+  geom_boxplot() +
+  labs(x = "RCP", y = "Tamaño del tumor (cm)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+El test de Wilcoxon nos da un p-valor muy bajo (p \< 0.05), es decir que hay diferencias significativas. Las pacientes que consiguen la RCP tienen, de media, tumores más pequeños que las que no la logran.
+
+### Relación entre la Edad y la RCP
+
+```{r}
+wilcox.test(EDAD_DIAGNOSTICO ~ RCP, data = datos_modelo)
+
+datos_modelo %>%
+  filter(!is.na(RCP) & !is.na(EDAD_DIAGNOSTICO)) %>%
+  ggplot(aes(x = RCP, y = EDAD_DIAGNOSTICO, fill = RCP)) +
+  geom_boxplot() +
+  labs(x = "RCP", y = "Edad al diagnóstico") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+En este caso, el test de Wilcoxon nos da un p-valor de 0.01002 (menor que 0.05). Por lo tanto, rechazamos la hipótesis nula y concluimos que sí existe una diferencia estadísticamente significativa en la edad entre los dos grupos. La edad de la paciente parece influir en la probabilidad de alcanzar la RCP. Como se observa en el boxplot, las pacientes que consiguen la RCP tienden a ser ligeramente más jóvenes que las que no la consiguen.
+
+## Correlación entre variables numéricas
+
+Por último, analizamos la correlación entre dos variables numéricas : la edad y el tamaño del tumor. Nos interesa ver si a mayor edad hay tendencia a presentar tumores más grandes. Al no seguir una distribución normal, utilizamos el coeficiente de correlación de Spearman.
+
+```{r}
+ggplot(datos_modelo, aes(x = EDAD_DIAGNOSTICO, y = TAMAÑO)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +
+  labs(x = "Edad al diagnóstico", y = "Tamaño del tumor (cm)") +
+  theme_minimal()
+
+cor.test(datos_modelo$EDAD_DIAGNOSTICO, datos_modelo$TAMAÑO, method = "spearman")
+```
+
+La línea de tendencia es prácticamente plana. El coeficiente rho de Spearman es muy cercano a cero (0.03039399) y el p-valor es alto (0.422). Con esto concluimos que, en esta muestra, no hay correlación entre la edad de la paciente y el tamaño del tumor.
+
+# Análisis multivariante: regresión logística
+
+## Modelos iniciales
+
+Para el análisis multivariante vamos a usar la regresión logística, ya que nuestra variable RCP es categórica binaria (SI/NO).
+
+Primero, creamos un modelo inicial introduciendo todas las variables que en el análisis bivariante nos salieron significativas (p-valor \< 0.05). Así vemos cómo se comportan al analizarlas todas juntas.
+
+```{r}
+modelo1 <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + ESTADIO_CAT + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, 
+               data = datos_modelo, 
+               family = binomial)
+
+summary(modelo1)
+```
+
+Fijándonos en los p-valores, vemos que casi todas las variables mantienen su significancia estadística (p \< 0.05) al meterlas juntas. Tomar antibióticos un mayor tamaño tumoral y ser mayor de 50 años reducen la probabilidad de alcanzar la RCP. Por el contrario, un tumor de grado 3 o un fenotipo HER2 o Triple Negativo (en comparación con el Luminal) aumentan la probabilidad de RCP. Lo más llamativo es que el estadio del tumor (ESTADIO_CAT), que en el univariante sí importaba, deja de ser significativo cuando tenemos en cuenta el tamaño y el resto de factores. Apuntamos el AIC de este modelo (835.47) para comparar luego.
+
+\
+Ahora vamos a ver qué ocurre si en lugar de usar la edad en categorías, usamos la variable numérica original.
+
+```{r}
+modelo2 <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + ESTADIO_CAT + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_DIAGNOSTICO, 
+               data = datos_modelo, 
+               family = binomial)
+
+summary(modelo2)
+```
+
+Al meter la edad en su formato original (EDAD_DIAGNOSTICO), vemos que también es estadísticamente significativa (p = 0.005), lo que confirma que a mayor edad, menor es la probabilidad de respuesta completa. Sin embargo, el valor de AIC de este segundo modelo es 836.85. Al ser ligeramente superior al del primer modelo (835.47), comprobamos que en este caso concreto usar la edad categorizada funciona un poco mejor para el ajuste.\
+
+## Selección de variables con stepwise regression
+
+Vamos a aplicamr un método de selección de variables (stepwise regression) mediante el algoritmo backward usando la función stepAIC. El objetivo es comprobar si la máquina llega a un modelo mejor que los que hemos construido.
+
+Hemos partido de un modelo completo que incluye todas las variables disponibles.
+
+```{r}
+library(MASS)
+
+# Creamos un modelo completo con TODAS las variables  disponibles (incluyendo las numéricas continuas y el estadio) para ver qué descarta el algoritmo 
+modelo_completo_para_step <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + ESTADIO_CAT + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_DIAGNOSTICO + Ki67_CAT + RE_CAT + RP_CAT, 
+                                 data = datos_modelo, 
+                                 family = binomial)
+
+
+modelo_step_back <- stepAIC(modelo_completo_para_step, direction = "backward")
+
+
+summary(modelo_step_back)
+```
+
+El resultado obtenido es un ejemplo perfecto de las limitaciones de los métodos de selección de variables que hemos estudiado en clase.
+
+1.  En el primer paso (Step: AIC=811.85), el algoritmo evalúa la eliminación de cada variable. Como retirar cualquier variable produce un ligerísimo aumento del AIC (por ejemplo, quitar Ki67_CAT lo sube a 812.35), la función \<none\> se marca como la ganadora. La máquina decide no eliminar ninguna variable.
+
+2.  Si revisamos los coeficientes del modelo elegido por la máquina, vemos que mantiene variables que claramente no son estadísticamente significativas (p \> 0.05), como ESTADIO_CAT, GRADO_CAT, Ki67_CAT o el fenotipo TRIPLE NEGATIVO.
+
+En conclusion , este resultado nos demuestra que los algoritmos automáticos basados en AIC deben considerarse herramientas de apoyo y no criterios decisivos. El algoritmo stepAIC ha priorizado rascar unas décimas en el ajuste a costa de dejarnos un modelo con overfitting, lleno de ruido y muy difícil de interpretar en una consulta de verdad.
+
+Por último, vamos a buscar un modelo que sea "bueno". Para ello, vamos a quitar las variables que claramente no están aportando nada. Como hemos visto antes en los modelos iniciales, ESTADIO_CAT no es significativa en el entorno multivariante, así que la eliminamos de la fórmula. Usaremos la edad categorizada, ya que nos dio un AIC ligeramente mejor.
+
+## Modelo final optimizado
+
+```{r}
+modelo_final <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, 
+                    data = datos_modelo, 
+                    family = binomial)
+
+summary(modelo_final)
+```
+
+Al ejecutar este modelo, comprobamos que ahora sí, todas las variables que hemos mantenido son estadísticamente significativas (su p-valor es menor a 0.05). Aunque el AIC (836.22) es prácticamente idéntico al del primer modelo, nos quedamos con este porque es más simple y evita el ruido de variables que no aportaban significancia.
+
+Analizando los coeficientes (columna Estimate), podemos extraer las conclusiones . Hay que recordar siempre que estamos midiendo la sensibilidad a la quimioterapia neoadyuvante, es decir, la probabilidad de alcanzar la RCP, y no la supervivencia (no es un análisis de supervivencia). Conclusiones hasta ahora:
+
+1.  El coeficiente de ANTIBIOTICOSI es negativo (-0.556), es decir, se confirma nuestra hipótesis principal del estudio: incluso ajustando por las demás características del tumor, el simple hecho de tomar antibióticos es un factor independiente que **reduce la probabilidad** de alcanzar una RCP.
+2.  En cuanto al tamaño del tumor, y como era esperable, su coeficiente es negativo (-0.201). Por cada centímetro extra que mide el tumor, la probabilidad de conseguir la RCP disminuye.
+3.  En cuanto a la edad, el grupo EDAD_CAT\>=50 tiene un coeficiente negativo (-0.515). Como era de esperar, ser mayor de 50 años juega en contra de la efectividad del tratamiento en comparación con las pacientes más jóvenes.
+4.  En cuanto al fenotipo, como hemos puesto el fenotipo LUMINAL como referencia, los coeficientes de HER2(1.952) y TRIPLE NEGATIVO (1.194) son muy positivos. Es decir, estos tipos son mucho más sensibles a la quimioterapia y tienen mayor probabilidad de alcanzar la RCP que los tumores Luminales.
+5.  En cuanto al grado del tumor, presenta un coeficiente positivo (0.396). Tener un tumor de grado 3 aumenta la probabilidad de lograr la RCP frente a los de grado 1/2. Es decir, la quimioterapia es más eficaz destruyendo células que se dividen agresiva y rápidamente (mayor quimiosensibilidad), aunque a largo plazo estos tumores más agresivos puedan tener peor pronóstico.
+
+En conclusión, nuestro modelo multivariante respalda que la alteración de la microbiota por el uso de antibióticos afecta de manera negativa a la efectividad del tratamiento neoadyuvante, independientemente de las características iniciales del tumor de la paciente.
+
+Por tanto, **validamos este modelo manual (modelo_final)**. Nuestro modelo manual, construido a priori apoyándonos en el conocimiento clínico y en la limpieza de variables no significativas, es mucho más coherente y robusto, y garantiza que todos los factores incluidos (Antibióticos, Fenotipo, Grado, Tamaño y Edad) tienen un efecto de verdad y significativo sobre la probabilidad de RCP.
+
+Nota: Nuestro modelo final presenta un AIC de 836.22 sobre casi la totalidad de la muestra (699). Es importante destacar que modelos alternativos que usen por ejemplo na.omit tendrán AICs más bajos, pero a costa de perder una gran cantidad de información . Al haber utilizado la imputación múltiple nuestro modelo mantiene el tamaño original y resulta por tanto en estimaciones más fiables. Lo probamos con na.omit:
+
+## Casos completos vs datos imputados (hablado en la clase del 17/04/2026)
+
+En entornos clínicos explicativos, la imputación múltiple puede introducir sesgos al "inventar" datos.. Por ello, y para comprobar la robustez de nuestros hallazgos, vamos a crear un dataframe alternativo eliminando cualquier paciente que tenga algún dato faltante con na.omit:
+
+```{r}
+# 1. Creamos el dataset eliminando todos los NA (cc de casos completos)
+datos_cc <- na.omit(datos_clean)
+
+# 2. Aplicamos la misma recodificación
+datos_modelo_cc <- datos_cc %>%
+  mutate(
+    EDAD_CAT = cut(EDAD_DIAGNOSTICO, breaks = c(0, 25, 50, Inf), labels = c("<25", "25-49", ">=50"), right = FALSE),
+    GRADO_CAT = case_when(GRADO %in% c("1", "2") ~ "1/2", GRADO == "3" ~ "3", TRUE ~ as.character(GRADO)) %>% as.factor(),
+    ESTADIO_CAT = case_when(ESTADIO %in% c("I", "IA", "IB") ~ "I", ESTADIO %in% c("IIA", "IIB") ~ "II", ESTADIO %in% c("IIIA", "IIIB", "IIIC") ~ "III", ESTADIO == "IV" ~ "IV", TRUE ~ as.character(ESTADIO)) %>% as.factor(),
+    FENOTIPO_CAT = factor(case_when(FENOTIPO_IHQ %in% c("LUMINAL A", "LUMINAL B") ~ "LUMINAL", FENOTIPO_IHQ %in% c("LUMINAL-HER2", "HER2") ~ "HER2", !is.na(FENOTIPO_IHQ) ~ "TRIPLE NEGATIVO"), levels = c("LUMINAL", "HER2", "TRIPLE NEGATIVO")),
+    RCP = case_when(RCB %in% c("RCB-0", "RCB-I") ~ "SI", RCB %in% c("RCB-II", "RCB-III") ~ "NO", TRUE ~ as.character(RCB)) %>% as.factor(),
+    ANTIBIOTICO = as.factor(ANTIBIOTICO)
+  )
+
+# 3. Ajustamos el mismo modelo logístico pero con casos completos
+modelo_cc <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, 
+                 data = datos_modelo_cc, 
+                 family = binomial)
+
+summary(modelo_cc)
+```
+
+Conclusiones de este modelo de casos completos (`modelo_cc`) frente a nuestro modelo con los datos imputados:
+
+1.  Al aplicar `na.omit`, el modelo se ha ajustado sobre apenas 239 pacientes (238 grados de libertad) frente a los casi 700 del modelo imputado. Esta grandísima pérdida de información hace que el modelo pierda potencia para detectar diferencias . Variables que antes eran muy significativas, como el fenotipo Triple Negativo o el Grado 3, ahora muestran p-valores superiores a 0.05.
+2.  En cuanto a los antibioticos, en este modelo el uso de antibiotios pierde su significancia (p = 0.105). Sin embargo, es fundamental mirar su coeficiente Estimate = -0.501, que sigue apuntando en la misma dirección y con una magnitud casi idéntica al modelo imputado (-0.556). La tendencia negativa existe en los datos sin imputar, simplemente no tenemos el volumen de pacientes suficiente para afirmarlo
+3.  En cuanto al AIC, el AIC de este modelo ha bajado drásticamente a 278.07. No obstante, sabemos que no podemos comparar este valor directamente con el AIC de 836.22 del modelo imputado, ya que el AIC depende directamente del tamaño de la muestra . No es que este modelo sea mejor , es que tiene menos datos que evaluar
+
+Conclusión: el modelo de casos completos nos demuestra que nuestros hallazgos (el efecto negativo de los antibióticos) no es un invento de la imputación ya que está presente en los datos crudos. Al mismo tiempo, el modelo imputado con mice sigue siendo la estrategia adecuada a mi parecer , ya que nos ha permitido aprovechar la información de toda la muestra para confirmar nuestra hipótesis .
+
+# Modelo predictivo
+
+AHORA pasamos a usar nuestro modelo de regresión logística para predecir resultados. Para ello, calculamos la probabilidad que tiene cada paciente de alcanzar laRCP en función de sus características. Establecemos un umbral de 0.5: si la probabilidad calculada es mayor al 50%, el modelo predice "SI". si es menor o igual, predice "NO".
+
+```{r}
+evaluar_modelo <- function(modelo, datos, umbral = 0.5) {
+  probabilidades <- predict(modelo, newdata = datos, type = "response")
+  predicciones <- ifelse(probabilidades > umbral, "SI", "NO")
+  
+  matriz_confusion <- table(Prediccion = predicciones, Realidad = datos$RCP)
+  
+  cat("Matriz de confusion")
+  print(matriz_confusion)
+  
+  TP <- sum(predicciones == "SI" & datos$RCP == "SI", na.rm = TRUE)  
+  TN <- sum(predicciones == "NO" & datos$RCP == "NO", na.rm = TRUE)  
+  FP <- sum(predicciones == "SI" & datos$RCP == "NO", na.rm = TRUE) 
+  FN <- sum(predicciones == "NO" & datos$RCP == "SI", na.rm = TRUE)  
+  
+  accuracy <- (TP + TN) / (TP + TN + FP + FN)
+  sensibilidad <- TP / (TP + FN)
+  especificidad <- TN / (TN + FP)
+  vpp <- TP / (TP + FP) 
+  
+  metricas <- data.frame(
+    Metrica = c("Accuracy", "Sensibilidad", "Especificidad", "Valor predictivo positivo (PPV)"),
+    Valor = round(c(accuracy, sensibilidad, especificidad, vpp), 4)
+  )
+  
+  cat("Métricas")
+  print(metricas)
+  
+  invisible(list(matriz = matriz_confusion, metricas = metricas))
+}
+
+resultados <- evaluar_modelo(modelo = modelo_final, datos = datos_modelo)
+```
+
+```{r}
+#library(caret)
+
+#summary(modelo_final)
+
+#datos_modelo$probabilidades <- predict(modelo_final, type = "response")
+
+#datos_modelo$prediccion <- ifelse(datos_modelo$probabilidades > 0.5, "SI", "NO")
+
+#confusionMatrix(factor(datos_modelo$prediccion), datos_modelo$RCP, positive = "SI")
+```
+
+Los resultados muestran lo siguiente:
+
+-   **Verdaderos Negativos (TN):** 275 pacientes que no lograron la RCP en la realidad y el modelo predijo correctamente ese resultado.
+
+-   **Verdaderos Positivos (TP):** 199 pacientes que lograron la RCP y el modelo también predijo correctamente que la lograrían.
+
+-   **Falsos Positivos (FP):** 116 pacientes que no consiguieron la RCP, pero el modelo predijo que sí.
+
+-   **Falsos Negativos (FN):** 110 pacientes que lograron la RCP, pero el modelo predijo que no la conseguirían.
+
+En base a estos valores, obtenemos las siguientes métricas:
+
+-   **Accuracy (Exactitud): 0.700.** El modelo clasifica el resultado correctamente (ya sea "SI" o "NO") en el 70% de los casos.
+
+-   **Sensibilidad: 0.6472.** De todos los pacientes que realmente lograron la RCP, el modelo identificó correctamente al 64.7% de ellos.
+
+-   **Especificidad: 0.7417.** De todos los pacientes que en la realidad no alcanzaron la RCP, el modelo identificó de forma correcta al 74.17%.
+
+-   **PPV: 0.6645.** De todas las veces que el modelo predice que un paciente va a lograr la RCP, esa predicción es correcta en el 66.45% de los casos.
+
+En conclusión, el modelo presenta una capacidad de predicción aceptable, en el 70%. La especificidad es ligeramente superior a la sensibilidad, lo que indica que el modelo clasifica con un poco más de precisión los casos donde el tratamiento no es efectivo frente a los casos de éxito clínico.
+
+## Realizamos el sampling con el modelo
+
+```{r}
+library(caret)
+set.seed(123)
+ind_train <- createDataPartition(datos_modelo$RCP, p = 0.8, list=TRUE, times=1)
+train_cc <- datos_modelo[ind_train[[1]], ]
+test_cc <- datos_modelo[-ind_train[[1]], ]
+
+modelo_entrenado <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, data = train_cc, family = binomial)
+  
+test_cc$probabilidades <- predict(modelo_entrenado, newdata = test_cc, type = "response")
+
+test_cc$prediccion <- ifelse(test_cc$probabilidades > 0.5, "SI", "NO")
+
+confusionMatrix(factor(test_cc$prediccion), test_cc$RCP, positive="SI")
+```
+
+Analizando la matriz de confusión obtenida sobre nuestro conjunto de test podemos interpretar las métricas del modelo:
+
+Accuracy: 0.6835. El modelo clasifica correctamente el 68.35% de los casos "nuevos". Sensibilidad: 0.6557. De los casos realmente positivos (pacientes que alcanzaron la RCP) , el modelo detecta correctamente al 65.57%. Specificity: 0.7051. De los casos negativos, el modelo clasifica correctamente al 70.51%. Precision (Valor predictivo positivo): 0.6349. Cuando el modelo predice "SI" (RCP exitosa) , la predicción es correcta en el 63.49% de los casos.
+
+## Método "Repeated-HoldOut"
+
+Como se comenta en clase, el método de HoldOut simple que acabamos de aplicar presenta un problema: dependemos de una única división aleatoria que puede ser "desafortunada" y conducirnos a una estimación pesimista u optimista .
+
+Para solucionar esto, aplicamos técnicas de resampling con el método Repeated-HoldOut. Utilizaremos de nuevo la función createDataPartition pero con el parámetro times=100 para generar 100 divisiones aleatorias (80% train / 20% test). Entrenaremos el modelo 100 veces y calcularemos su accuracy .
+
+```{r}
+set.seed(123)
+
+particiones <- createDataPartition(datos_modelo$RCP, p = 0.8, list = TRUE, times = 100)
+
+accuracies <- numeric(100)
+
+for(i in 1:100) {
+  indices <- particiones[[i]]
+  
+  train_temp <- datos_modelo[indices, ]
+  test_temp <- datos_modelo[-indices, ]
+  
+  modelo_temp <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, 
+                     data = train_temp, 
+                     family = binomial)
+  
+  probs_temp <- predict(modelo_temp, newdata = test_temp, type = "response")
+  preds_temp <- ifelse(probs_temp > 0.5, "SI", "NO")
+  
+  aciertos <- sum(preds_temp == test_temp$RCP, na.rm = TRUE)
+  total <- sum(!is.na(preds_temp) & !is.na(test_temp$RCP))
+  accuracies[i] <- aciertos / total
+}
+
+cat("Media de la accuracy (100 iteraciones):", round(mean(accuracies), 4), "\n")
+cat("Desviacion estandar:", round(sd(accuracies), 4), "\n")
+```
+
+Comentamos los resultados:
+
+1.  Media de la accuracy : 0.6737. Nuestro modelo clasifica correctamente el 67.37% de los casos en promedio. Es un valor muy cercano al obtenido en el HoldOut simple (68.35%), lo que nos confirma que aquella primera estimación no fue producto de una división aleatoria excesivamente optimista.
+2.  Desviación estándar: 0.0329. Este es el dato más importante para evaluar la robustez. Una desviación de apenas el 3.3% indica que el rendimiento del modelo es tremendamente estable. Es decir, independientemente de qué pacientes caigan en el grupo de entrenamiento o de test, el modelo fluctuará muy poco.
+
+Vemos las frecuencia de las accuracy mediante un histograma:
+
+```{r}
+# Convertimos el vector en un data.frame para que ggplot lo entienda
+df_accuracies <- data.frame(Accuracy = accuracies)
+
+library(ggplot2)
+
+ggplot(df_accuracies, aes(x = Accuracy)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 15, alpha = 0.8) +
+  geom_vline(aes(xintercept = mean(Accuracy)), color = "red", linetype = "dashed", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Distribución de la accuracy (Repeated Hold-Out)",
+       subtitle = paste("100 iteraciones | media:", round(mean(accuracies), 4), "| desviacion estandar:", round(sd(accuracies), 4)),
+       x = "Accuracy",
+       y = "Frecuencia")
+```
+
+```{r}
+# Convertimos el vector en un data.frame para que ggplot lo entienda
+df_accuracies <- data.frame(Accuracy = accuracies)
+
+library(ggplot2)
+
+ggplot(df_accuracies, aes(x = Accuracy)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 15, alpha = 0.8) +
+  geom_vline(aes(xintercept = mean(Accuracy)), color = "red", linetype = "dashed", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Distribución de la accuracy (Repeated Hold-Out)",
+       subtitle = paste("100 iteraciones | media:", round(mean(accuracies), 4), "| desviacion estandar:", round(sd(accuracies), 4)),
+       x = "Accuracy",
+       y = "Frecuencia")
+```
+
+El histograma muestra cómo se distribuyen las 100 accuracy obtenidas. Como se puede observar, los resultados se agrupan siguiendo una distribución acampanada alrededor de la media (que represento con una línea roja discontinua). Hay muy pocos valores por debajo del 60% o por encima del 75%, lo que demuestra que la capacidad predictiva de nuestro modelo es consistente y no depende de una partición suertuda de los datos .
+
+Para tener el código más limpio y poder reutilizarlo en los siguientes pasos, vamos a encapsular todo el procedimiento del Repeated Hold-Out en una función:
+
+```{r}
+library(caret)
+
+RepetitiveHoldOut <- function(datos, formula_modelo, variable_objetivo, p_train = 0.8, repeticiones = 100, semilla = 123) {
+  
+  accuracy <- numeric(repeticiones)
+  set.seed(semilla)
+  
+  ind_train <- createDataPartition(datos[[variable_objetivo]], p = p_train, list = TRUE, times = repeticiones)
+  
+  for (i in 1:repeticiones) {
+    
+    train_cc <- datos[ind_train[[i]], ]
+    test_cc  <- datos[-ind_train[[i]], ]
+    
+    modelo_entrenado <- glm(formula_modelo, data = train_cc, family = binomial)
+    
+    probabilidades <- predict(modelo_entrenado, newdata = test_cc, type = "response")
+    predicciones   <- ifelse(probabilidades > 0.5, "SI", "NO")
+    
+    predicciones_factor <- factor(predicciones, levels = c("NO", "SI"))
+    test_factor         <- factor(test_cc[[variable_objetivo]], levels = c("NO", "SI"))
+    
+    matriz <- confusionMatrix(predicciones_factor, test_factor, positive = "SI")
+    accuracy[i] <- matriz$overall["Accuracy"]
+  }
+  
+  resultados <- list(
+    Accuracy_Media = mean(accuracy),
+    Accuracy_Maximo = max(accuracy),
+    Accuracy_Minimo = min(accuracy),
+    Desviacion_Estandar = sd(accuracy),
+    Todas_Las_Notas = accuracy
+  )
+  
+  return(resultados)
+}
+```
+
+Ahora vamos a hacer una función que se encargue de graficar cómo varía el accuracy usando diferentes proporciones de datos para el entrenamiento (50%, 60%, 70%, 80% y 90%). Con ayuda de esto justificaremos cuál es el mejor reparto.
+
+```{r}
+library(ggplot2)
+
+proporciones <- c(0.5, 0.6, 0.7, 0.8, 0.9)
+repeticiones <- 100 
+
+resultados_totales <- data.frame()
+
+for (p_train in proporciones) {
+  set.seed(123)
+  ind_train <- createDataPartition(datos_modelo$RCP, p = p_train, list = TRUE, times = repeticiones)
+  
+  acc_vector <- numeric(repeticiones)
+  
+  for (i in 1:repeticiones) {
+    train_cc <- datos_modelo[ind_train[[i]], ]
+    test_cc  <- datos_modelo[-ind_train[[i]], ]
+    
+    modelo <- glm((RCP == "SI")*1.0 ~ ANTIBIOTICO + FENOTIPO_CAT + GRADO_CAT + TAMAÑO + EDAD_CAT, 
+                  data = train_cc, family = binomial)
+    
+    probabilidades <- predict(modelo, newdata = test_cc, type = "response")
+    predicciones   <- ifelse(probabilidades > 0.5, "SI", "NO")
+    
+    matriz <- confusionMatrix(factor(predicciones, levels = c("NO", "SI")), 
+                              factor(test_cc$RCP, levels = c("NO", "SI")), 
+                              positive = "SI")
+    acc_vector[i] <- matriz$overall["Accuracy"]
+  }
+  
+  temp_df <- data.frame(Proporcion = paste0(p_train * 100, "%"), Accuracy = acc_vector)
+  resultados_totales <- rbind(resultados_totales, temp_df)
+}
+
+resultados_totales$Proporcion <- factor(resultados_totales$Proporcion, levels = c("50%", "60%", "70%", "80%", "90%"))
+
+grafico_cajas <- ggplot(resultados_totales, aes(x = Proporcion, y = Accuracy, fill = Proporcion)) +
+  geom_boxplot(alpha = 0.7, color = "black") +
+  theme_minimal() +
+  labs(title = "Evolución del accuracy según el tamaño de entrenamiento",
+       subtitle = "A menor conjunto de test, mayor inestabilidad (cajas más grandes)",
+       x = "Proporción de entrenamiento",
+       y = "Accuracy en el conjunto de test") +
+  theme(legend.position = "none")
+
+print(grafico_cajas)
+
+tabla_resumen <- resultados_totales %>%
+  group_by(Proporcion) %>%
+  summarise(
+    Accuracy_Medio = mean(Accuracy),
+    Desviacion_Estandar = sd(Accuracy)
+  )
+
+print(tabla_resumen)
+```
+
+Como podemos observar en este gráfico y en la tabla resumen:
+
+Si usamos pocos datos para entrenar (50%), la desviación estándar es muy baja (0.0180), lo que significa que el modelo es estable, pero el accuracy medio se queda estancado en un 66.5%. Sin embargo, si nos vamos al extremo contrario y usamos un 90% para entrenar, el accuracy sube al 68.1%, pero la desviación estándar se dispara casi al doble (0.0569). Al dejar un conjunto de test tan pequeño (solo un 10%), cualquier acierto o fallo puntual altera drásticamente el porcentaje, por tanto hace que el modelo sea muy inestable tal como se observa en el box rosa mucho más grande del gráfico.
+
+Por tanto, nuestra decisión de fijar la distribución en 80/20 queda totalmente justificada: conseguimos uno de los mejores porcentajes de exactitud (67.4%) manteniendo una desviación estándar bastante controlada (0.0329).
+
+## Búsqueda exhaustiva
+
+Por último, realizamos una búsqueda exhaustiva para encontrar la mejor combinación de variables para nuestro modelo predictivo. OJO Esto puede tardar. Paciencia.
+
+```{r}
+# Definimos todas las variables candidatas (ajustadas a nuestros datos)
+variables_predictoras <- c("ESTADIO_CAT", "GRADO_CAT", "TAMAÑO", "RP_CAT", 
+                           "RE_CAT", "HER2_CAT", "EDAD_CAT", "FENOTIPO_CAT", 
+                           "ANTIBIOTICO")
+
+evaluar_combinacion <- function(vars_combinacion, datos) {
+  
+  predictores <- paste(vars_combinacion, collapse = " + ")
+  formula_str <- paste("(RCP == 'SI')*1.0 ~", predictores)
+  
+  modelo_temp <- glm(as.formula(formula_str), data = datos, family = binomial)
+  
+  # Usamos nuestra función creada arriba
+  resultados_holdout <- RepetitiveHoldOut(datos = datos, 
+                                          formula_modelo = as.formula(formula_str), 
+                                          variable_objetivo = "RCP", 
+                                          p_train = 0.8, 
+                                          repeticiones = 100)
+  
+  res_df <- data.frame(
+    Num_Variables = length(vars_combinacion),
+    Combinacion = predictores,
+    AIC = AIC(modelo_temp),  
+    ACC_Medio = resultados_holdout$Accuracy_Media,      
+    SD_Acc = resultados_holdout$Desviacion_Estandar
+  )
+  
+  return(list(
+    modelo = modelo_temp,
+    resultados = res_df
+  ))
+}
+
+resultados_busqueda <- data.frame()  
+lista_de_modelos <- list()           
+contador <- 1                        
+
+# Bucle que prueba desde 1 hasta todas las variables
+for (k in 1:length(variables_predictoras)) {
+  cat("Evaluando combinaciones de", k, "variables...\n")
+  combinaciones <- combn(variables_predictoras, k, simplify = FALSE)
+  
+  for (comb in combinaciones) {
+    evaluacion <- evaluar_combinacion(vars_combinacion = comb, datos = datos_modelo)
+    
+    resultados_busqueda <- rbind(resultados_busqueda, evaluacion$resultados)
+    lista_de_modelos[[contador]] <- evaluacion$modelo
+    contador <- contador + 1
+  }
+}
+
+resultados_busqueda$ID_Modelo <- 1:nrow(resultados_busqueda)
+
+# Ordenamos de mayor a menor Accuracy
+resultados_ordenados <- resultados_busqueda[order(-resultados_busqueda$ACC_Medio), ]
+rownames(resultados_ordenados) <- NULL
+
+print("--- TOP 5 MEJORES MODELOS ---")
+print(head(resultados_ordenados, 5))
+
+# Extraemos el resumen del mejor modelo de todos
+id_ganador <- resultados_ordenados$ID_Modelo[1]
+mejor_modelo_exhaustivo <- lista_de_modelos[[id_ganador]]
+
+print("--- SUMMARY DEL MEJOR MODELO ---")
+summary(mejor_modelo_exhaustivo)
+```
+
+Tras evaluar absolutamente todas las combinaciones posibles de nuestras variables (desde usar 1 sola hasta usar las 9), el algoritmo ha determinado que el mejor modelo posible para este conjunto de datos utiliza 6 variables.
+
+Este modelo está compuesto por: ESTADIO_CAT , TAMAÑO, RE_CAT, EDAD_CAT, FENOTIPO_CAT y ANTIBIOTICO. Con esta combinación logramos romper nuestra marca anterior ya que AHORA alcanzamos un ACCURACY MEDIO DEL 70.47% en las 100 iteraciones del Repeated Hold-Out y mantenemos una desviación estándar muy robusta (0.034).
+
+Si analizamos los coeficientes de este modelo , podemos extraer las siguientes conclusiones :
+
+-   El efecto de los antibioticos se confirma. La variable ANTIBIOTICO sigue siendo estadísticamente significativa (p = 0.00391) con un coeficiente negativo (-0.511), es decir, independientemente de con qué otras variables se combine, tomar antibióticos es un factor que reduce la probabilidad de alcanzar la RCP.
+
+-   Por otra parte, la busqueda exhaustiva ha introducido la variable de los receptores de estrógenos (RE_CAT). Vemos que tener los receptores positivos penaliza enormemente la probabilidad de RCP (coeficiente de -1.279, p \< 0.001).
+
+-   En cuanto a otras variables: el TAMAÑO del tumor (a mayor tamaño, menor RCP), La edad avanzada (ser mayor de 50 años perjudica la respuesta) y tener un fenotipo HER2 (que responde extraordinariamente bien al tratamiento) siguen siendo importantes en el modelo.
+
+En conclusión, la búsqueda exhaustiva nos ha permitido optimizar al máximo la capacidad predictiva de nuestro estudio. Hemos superado el rendimiento de nuestro modelo inicial y, lo más importante, hemos vuelto a demostrar el impacto negativo de los antibióticos en la eficacia de la quimioterapia neoadyuvante.
+
+### Curva ROC y AUC del mejor modelo predictivo
+
+Para finalizar vamos a evaluar la capacidad discriminativa del modelo óptimo (el de 6 variables) independientemente del umbral de decisión del 50%. Para ello, calculamos la curva ROC y el AUC:
+
+```{r}
+library(pROC)
+
+# 1. Extraemos la realidad (0 y 1) directamente de las entrañas del modelo
+realidad_modelo <- mejor_modelo_exhaustivo$y
+
+# 2. Extraemos las probabilidades calculadas para esos mismos pacientes
+probabilidades_mejor <- mejor_modelo_exhaustivo$fitted.values
+
+# 3. Generamos la curva ROC
+curva_roc <- roc(realidad_modelo, probabilidades_mejor)
+
+# 4. Calculamos e imprimimos el AUC
+auc_valor <- auc(curva_roc)
+cat("El AUC del mejor modelo es:", round(auc_valor, 4), "\n")
+
+# 5. Dibujamos la curva ROC
+plot(curva_roc, col = "darkblue", main = "Curva ROC - mejor modelo exhaustivo", lwd = 2, legacy.axes = TRUE)
+```
+
+Como hemos estudiado en la teoría, el AUC resume la capacidad global del modelo para discriminar entre pacientes que lograrán la RCP y las que no, independientemente del umbral de decisión (0.5) que elegimos previamente.
+
+Al calcular el AUC de nuestro mejor modelo obtenemos un valor exacto de 0.765. Sabiendo que un AUC de 0.5 equivale a clasificar a los pacientes lanzando una moneda al azar, y un AUC de 1.0 representaría una discriminación perfecta, nuestro 0.765 es un resultado francamente bueno.
+
+Este valor de AUC significa que, si tomamos al azar a una paciente que realmente alcanzó la RCP tras la cirugía y a otra paciente que no lo hizo, en el 76.5% de los casos nuestro modelo matemático le habrá asignado una probabilidad de éxito mayor a la paciente que realmente lo logró.
+
+La gráfica obtenida refuerza esto : la curva (línea azul) se aleja claramente de la línea diagonal (que representaría el azar o 0.5) acercándose hacia la esquina superior izquierda. Por tanto, la combinación de nuestras 6 variables óptimas (incluyendo de manera destacada el uso de antibióticos) tiene un valor predictivo importante, valida nuestra hipótesis inicial y confirma que el modelo podría ser una herramienta de apoyo útil en la toma de decisiones en oncología .
+
+## Función general y K-Fold
+
+Siguiendo las indicaciones de clase, vamos a crear una función general de validación que nos permita evaluar cualquier combinación de variables mediante distintos métodos (como el Repeated Hold-Out o el K-Fold ) sin tener que repetir código.
+
+```{r}
+library(caret)
+
+# 1. Función para el K-Fold
+KFold_CrossValidation <- function(datos, formula_modelo, variable_objetivo, k = 10, semilla = 123) {
+  accuracy <- numeric(k)
+  set.seed(semilla)
+  
+  folds <- createFolds(datos[[variable_objetivo]], k = k, list = TRUE, returnTrain = TRUE)
+  
+  for (i in 1:k) {
+    train_data <- datos[folds[[i]], ]
+    test_data  <- datos[-folds[[i]], ]
+    
+    modelo_temp <- glm(formula_modelo, data = train_data, family = binomial)
+    probs <- predict(modelo_temp, newdata = test_data, type = "response")
+    preds <- ifelse(probs > 0.5, "SI", "NO")
+    
+    predicciones_factor <- factor(preds, levels = c("NO", "SI"))
+    test_factor         <- factor(test_data[[variable_objetivo]], levels = c("NO", "SI"))
+    
+    matriz <- confusionMatrix(predicciones_factor, test_factor, positive = "SI")
+    accuracy[i] <- matriz$overall["Accuracy"]
+  }
+  
+  return(list(
+    Accuracy_Media = mean(accuracy),
+    Desviacion_Estandar = sd(accuracy)
+  ))
+}
+
+# 2. Superfunción general de validación
+validacion <- function(datos, metodo_val, params_val, algoritmo = "RegresionLogistica", variables_seleccionadas, variable_objetivo = "RCP") {
+  
+  predictores <- paste(variables_seleccionadas, collapse = " + ")
+  formula_str <- paste("(RCP == 'SI')*1.0 ~", predictores)
+  mi_formula <- as.formula(formula_str)
+  
+  if (metodo_val == "RepetitiveHoldOut") {
+    
+    p_train_elegido <- params_val$p_train
+    reps_elegidas <- params_val$repeticiones
+    
+    # Llamamos a nuestra función ya creada en el apartado 8.2
+    resultados <- RepetitiveHoldOut(datos = datos, 
+                                    formula_modelo = mi_formula, 
+                                    variable_objetivo = variable_objetivo, 
+                                    p_train = p_train_elegido, 
+                                    repeticiones = reps_elegidas)
+    
+  } else if (metodo_val == "KFold") {
+    
+    k_elegido <- params_val$k
+    
+    # Llamamos a la nueva función K-Fold
+    resultados <- KFold_CrossValidation(datos = datos, 
+                                        formula_modelo = mi_formula, 
+                                        variable_objetivo = variable_objetivo, 
+                                        k = k_elegido)
+    
+  } else {
+    stop("¡Error! Método de validación no reconocido.")
+  }
+  
+  if (algoritmo == "RegresionLogistica") {
+    modelo_final <- glm(mi_formula, data = datos, family = binomial)
+  } else {
+    stop("¡Error! Algoritmo no soportado.")
+  }
+  
+  return(list(
+    Metodo_Usado = metodo_val,
+    Modelo_Entrenado = modelo_final,
+    Metricas = resultados
+  ))
+}
+
+# 3. Probamos la función evaluando nuestro mejor modelo mediante K-Fold
+mejores_variables <- c("ESTADIO_CAT", "TAMAÑO", "RE_CAT", "EDAD_CAT", "FENOTIPO_CAT", "ANTIBIOTICO")
+parametros_kfold <- list(k = 10)
+
+resultados_kfold <- validacion(datos = datos_modelo, 
+                               metodo_val = "KFold", 
+                               params_val = parametros_kfold, 
+                               algoritmo = "RegresionLogistica", 
+                               variables_seleccionadas = mejores_variables, 
+                               variable_objetivo = "RCP")
+
+cat("--- RESULTADOS K-FOLD (10 Folds) ---\n")
+cat("Accuracy medio:", round(resultados_kfold$Metricas$Accuracy_Media, 4), "\n")
+cat("Desviación estándar:", round(resultados_kfold$Metricas$Desviacion_Estandar, 4), "\n")
+```
+
+Al analizar los resultados obtenidos tras aplicar la validación cruzada con K-Fold (k=10) mediante nuestra nueva función generalizada, podemos extraer las siguientes conclusiones:
+
+[1.]{.underline} El Accuracy medio obtenido (70.54%) es prácticamente idéntico al que nos dio el método Repeated Hold-Out para nuestro mejor modelo (70.47%). Esto es una excelente noticia ya que demuestra d que la capacidad predictiva de nuestro modelo en torno al 70.5% es completamente real e independiente de la técnica que utilicemos.
+
+[2.]{.underline} Observamos que la desviación estándar es ligeramente superior al método anterior (4.8% frente a 3.4%). Esto cuadra con nuestro estudio previo de proporciones: en un K-Fold de 10, el modelo entrena con el 90% de los datos y se examina solo con un 10%. Tal y como demostramos gráficamente antes, al tener un conjunto de test más reducido en cada iteración, es normal y esperable que exista un poco más de fluctuación en los aciertos.
+
+# Algoritmos de aprendizaje y estimación honesta
+
+Para culminar nuestro estudio desarrollamos una función general de validación cruzada anidada 5x2. Esta función permite evaluar los principales algoritmos vistos en la teoría (Regresión Regularizada, SVM, Random Forest, Árboles de Decisión y Naive Bayes).
+
+En el bucle interno (2 pliegues) se define una malla de exploración de hiperparámetros específica para cada algoritmo, y En el bucle externo (5 pliegues) se evalúa su rendimiento real sobre datos invisibles.
+
+```{r}
+library(caret)
+library(pROC)
+library(glmnet)
+library(e1071)
+library(randomForest)
+library(rpart)
+
+Estimacion_Honesta_5x2_Multi <- function(datos, variables_predictoras, variable_objetivo = "RCP", algoritmo = "GLMNET") {
+  
+  formula_completa <- as.formula(paste(variable_objetivo, "~", paste(variables_predictoras, collapse = " + ")))
+  
+  # 1. Definimos la malla de parámetros según el algoritmo
+  if (algoritmo == "GLMNET") {
+    parametros <- expand.grid(pmt1 = c(0, 0.5, 1), pmt2 = c(0.01, 0.1, 1)) # alpha, lambda
+  } else if (algoritmo == "SVM") {
+    parametros <- expand.grid(pmt1 = c(0.1, 1, 10), pmt2 = c(0.01, 0.1, 1)) # cost, gamma
+  } else if (algoritmo == "RandomForest") {
+    parametros <- expand.grid(pmt1 = c(2, 4, 6), pmt2 = c(100, 300)) # mtry, ntree
+  } else if (algoritmo == "ArbolDecision") {
+    parametros <- expand.grid(pmt1 = c(0.001, 0.01, 0.1), pmt2 = NA) # cp (complejidad)
+  } else if (algoritmo == "NaiveBayes") {
+    parametros <- expand.grid(pmt1 = NA, pmt2 = NA) # Naive Bayes base no suele requerir malla compleja aquí
+  } else {
+    stop("Algoritmo no soportado")
+  }
+  
+  # Usamos datos completos sin NAs
+  datos_cc <- na.omit(datos[, c(variable_objetivo, variables_predictoras)])
+  
+  set.seed(123) 
+  folds_outer <- createFolds(datos_cc[[variable_objetivo]], k = 5)
+  
+  auc_outer <- numeric(5)
+  acc_outer <- numeric(5) 
+  
+  cat("Ejecutando 5x2 CV para", algoritmo, "...\n")
+  
+  for(i in 1:5) {
+    idx_outer_test <- folds_outer[[i]]
+    idx_outer_train <- setdiff(1:nrow(datos_cc), idx_outer_test)
+    
+    folds_inner <- createFolds(datos_cc[[variable_objetivo]][idx_outer_train], k = 2)
+    auc_inner <- matrix(NA, nrow = 2, ncol = nrow(parametros))
+    
+    # BUCLE INTERNO: Optimización
+    for(j in 1:2) {
+      idx_val_inner <- idx_outer_train[folds_inner[[j]]]
+      idx_train_inner <- setdiff(idx_outer_train, idx_val_inner)
+      
+      train_data <- datos_cc[idx_train_inner, ]
+      val_data <- datos_cc[idx_val_inner, ]
+      
+      for(k in 1:nrow(parametros)) {
+        
+        if (algoritmo == "GLMNET") {
+          X_tr <- model.matrix(formula_completa, data = train_data)[, -1]
+          Y_tr <- ifelse(train_data[[variable_objetivo]] == "SI", 1, 0)
+          X_v  <- model.matrix(formula_completa, data = val_data)[, -1]
+          Y_v  <- ifelse(val_data[[variable_objetivo]] == "SI", 1, 0)
+          
+          modelo <- glmnet(x = X_tr, y = Y_tr, family = "binomial", 
+                           alpha = parametros$pmt1[k], lambda = parametros$pmt2[k])
+          pred <- predict(modelo, newx = X_v, type = "response")
+          auc_inner[j, k] <- as.numeric(roc(Y_v, as.numeric(pred), quiet = TRUE)$auc)
+          
+        } else if (algoritmo == "SVM") {
+          modelo <- svm(formula_completa, data = train_data, probability = TRUE,
+                        cost = parametros$pmt1[k], gamma = parametros$pmt2[k])
+          pred <- predict(modelo, val_data, probability = TRUE)
+          probs <- attr(pred, "probabilities")[, "SI"]
+          auc_inner[j, k] <- as.numeric(roc(val_data[[variable_objetivo]], probs, levels = c("NO", "SI"), quiet = TRUE)$auc)
+          
+        } else if (algoritmo == "RandomForest") {
+          modelo <- randomForest(formula_completa, data = train_data, 
+                                 mtry = parametros$pmt1[k], ntree = parametros$pmt2[k])
+          probs <- predict(modelo, val_data, type = "prob")[, "SI"]
+          auc_inner[j, k] <- as.numeric(roc(val_data[[variable_objetivo]], probs, levels = c("NO", "SI"), quiet = TRUE)$auc)
+          
+        } else if (algoritmo == "ArbolDecision") {
+          modelo <- rpart(formula_completa, data = train_data, cp = parametros$pmt1[k])
+          probs <- predict(modelo, val_data, type = "prob")[, "SI"]
+          auc_inner[j, k] <- as.numeric(roc(val_data[[variable_objetivo]], probs, levels = c("NO", "SI"), quiet = TRUE)$auc)
+          
+        } else if (algoritmo == "NaiveBayes") {
+          modelo <- naiveBayes(formula_completa, data = train_data)
+          probs <- predict(modelo, val_data, type = "raw")[, "SI"]
+          auc_inner[j, k] <- as.numeric(roc(val_data[[variable_objetivo]], probs, levels = c("NO", "SI"), quiet = TRUE)$auc)
+        }
+      }
+    }
+    
+    # Seleccionamos mejores parámetros del inner loop
+    best_pmts <- parametros[which.max(colMeans(auc_inner, na.rm=TRUE)), ]
+    
+    # BUCLE EXTERNO: Entrenamiento final y evaluación
+    outer_train <- datos_cc[idx_outer_train, ]
+    outer_test <- datos_cc[idx_outer_test, ]
+    
+    if (algoritmo == "GLMNET") {
+      X_otr <- model.matrix(formula_completa, data = outer_train)[, -1]
+      Y_otr <- ifelse(outer_train[[variable_objetivo]] == "SI", 1, 0)
+      X_ote <- model.matrix(formula_completa, data = outer_test)[, -1]
+      Y_ote <- ifelse(outer_test[[variable_objetivo]] == "SI", 1, 0)
+      
+      modelo_final <- glmnet(x = X_otr, y = Y_otr, family = "binomial", 
+                             alpha = best_pmts$pmt1, lambda = best_pmts$pmt2)
+      pred.test <- predict(modelo_final, newx = X_ote, type = "response")
+      auc_outer[i] <- as.numeric(roc(Y_ote, as.numeric(pred.test), quiet = TRUE)$auc)
+      acc_outer[i] <- mean(ifelse(pred.test > 0.5, 1, 0) == Y_ote)
+      
+    } else if (algoritmo == "SVM") {
+      modelo_final <- svm(formula_completa, data = outer_train, probability = TRUE,
+                          cost = best_pmts$pmt1, gamma = best_pmts$pmt2)
+      pred.test <- predict(modelo_final, outer_test, probability = TRUE)
+      probs.test <- attr(pred.test, "probabilities")[, "SI"]
+      auc_outer[i] <- as.numeric(roc(outer_test[[variable_objetivo]], probs.test, levels = c("NO", "SI"), quiet = TRUE)$auc)
+      acc_outer[i] <- mean(pred.test == outer_test[[variable_objetivo]])
+      
+    } else if (algoritmo == "RandomForest") {
+      modelo_final <- randomForest(formula_completa, data = outer_train, 
+                                   mtry = best_pmts$pmt1, ntree = best_pmts$pmt2)
+      probs.test <- predict(modelo_final, outer_test, type = "prob")[, "SI"]
+      class.test <- predict(modelo_final, outer_test)
+      auc_outer[i] <- as.numeric(roc(outer_test[[variable_objetivo]], probs.test, levels = c("NO", "SI"), quiet = TRUE)$auc)
+      acc_outer[i] <- mean(class.test == outer_test[[variable_objetivo]])
+      
+    } else if (algoritmo == "ArbolDecision") {
+      modelo_final <- rpart(formula_completa, data = outer_train, cp = best_pmts$pmt1)
+      probs.test <- predict(modelo_final, outer_test, type = "prob")[, "SI"]
+      class.test <- predict(modelo_final, outer_test, type = "class")
+      auc_outer[i] <- as.numeric(roc(outer_test[[variable_objetivo]], probs.test, levels = c("NO", "SI"), quiet = TRUE)$auc)
+      acc_outer[i] <- mean(class.test == outer_test[[variable_objetivo]])
+      
+    } else if (algoritmo == "NaiveBayes") {
+      modelo_final <- naiveBayes(formula_completa, data = outer_train)
+      probs.test <- predict(modelo_final, outer_test, type = "raw")[, "SI"]
+      class.test <- predict(modelo_final, outer_test)
+      auc_outer[i] <- as.numeric(roc(outer_test[[variable_objetivo]], probs.test, levels = c("NO", "SI"), quiet = TRUE)$auc)
+      acc_outer[i] <- mean(class.test == outer_test[[variable_objetivo]])
+    }
+  }
+  
+  return(data.frame(Algoritmo = algoritmo, AUC_Esperado = mean(auc_outer), ACC_Esperado = mean(acc_outer)))
+}
+
+# 2. Ponemos a competir a los algoritmos (Con las variables candidatas)
+variables_candidatas <- c("ESTADIO_CAT", "GRADO_CAT", "TAMAÑO", "RP_CAT", 
+                          "RE_CAT", "HER2_CAT", "EDAD_CAT", "FENOTIPO_CAT", "ANTIBIOTICO")
+
+res_glmnet <- Estimacion_Honesta_5x2_Multi(datos_modelo, variables_candidatas, "RCP", "GLMNET")
+res_svm <- Estimacion_Honesta_5x2_Multi(datos_modelo, variables_candidatas, "RCP", "SVM")
+res_rf <- Estimacion_Honesta_5x2_Multi(datos_modelo, variables_candidatas, "RCP", "RandomForest")
+res_arbol <- Estimacion_Honesta_5x2_Multi(datos_modelo, variables_candidatas, "RCP", "ArbolDecision")
+res_nb <- Estimacion_Honesta_5x2_Multi(datos_modelo, variables_candidatas, "RCP", "NaiveBayes")
+
+# 3. Juntamos y mostramos el ranking final
+ranking_honesto <- rbind(res_glmnet, res_svm, res_rf, res_arbol, res_nb)
+ranking_honesto <- ranking_honesto[order(-ranking_honesto$AUC_Esperado), ]
+
+cat("\n--- RANKING FINAL: ESTIMACIÓN HONESTA 5x2 CV ---\n")
+print(ranking_honesto)
+```
+
+De este ranking extraemos las siguientes conclusiones:
+
+1.  Las Máquinas de Soporte Vectorial (SVM), la Regresión Regularizada (GLMNET) y Random Forest demuestran un rendimiento excepcional y casi idéntico, todos ellos superando el umbral del 0.75 en AUC y rozando el 70% de accuracy.
+
+2.  Aunque SVM gana por una diferencia milimétrica en el AUC (0.755 frente a 0.754), GLMNET se corona como el ganador global al lograr el mejor porcentaje de accuracy (ACC = 70.25%). En el contexto de la ingeniería de la salud y la toma de decisiones clínicas, GLMNET es la opción ideal puesto que al ser un método Embedded (Lasso/Ridge), no actúa como una "caja negra" (como puede ocurrir con SVM o Random Forest), sino que penaliza variables de forma interpretable, permite a los oncólogos comprender el peso exacto de cada factor.
+
+3.  Como era esperable, el Árbol de Decisión simple queda en última posición (AUC = 0.713), demostrando que las relaciones entre el tamaño tumoral, la edad, el estadio y el tratamiento son demasiado complejas para resolverse con cortes binarios básicos. Asimismo, Naive Bayes se ve penalizado por su estricta asunción de independencia entre las variables, una condición teórica que raramente se cumple en la clínica real.
+
+**CONCLUSIONES** A lo largo de este informe hemos limpiado e imputado datos médicos, realizado análisis inferenciales y desplegado un pipeline de Machine Learning. Todo este proceso nos ha llevado a validar nuestra hipótesis original: **el uso de antibióticos durante la quimioterapia neoadyuvante es un factor predictivo independiente que afecta negativamente a la probabilidad de que una paciente con cáncer de mama alcance la Respuesta Patológica Completa.**
+
+# Despliegue en RShiny
+
+El valor real de un modelo predictivo radica en su capacidad para trasladarse desde el entorno de desarrollo hacia la práctica clínica. Con el objetivo de facilitar la explotación de los hallazgos obtenidos, el algoritmo de regresión optimizado se ha empaquetado y exportado para su puesta en producción:
+
+```{r}
+# Entrenamos el modelo final usando GLM (para que sea fácil de exportar)
+modelo_produccion <- glm((RCP == "SI")*1.0 ~ ESTADIO_CAT + GRADO_CAT + TAMAÑO + RP_CAT + 
+                           RE_CAT + HER2_CAT + EDAD_CAT + FENOTIPO_CAT + ANTIBIOTICO, 
+                         data = datos_modelo, family = binomial)
+
+# Lo guardamos en un archivo físico en tu ordenador
+saveRDS(modelo_produccion, "modelo_rcp.rds")
+```
+
+A partir del modelo, se ha diseñado una interfaz gráfica interactiva utilizando RShiny. Esta herramienta actúa como un Sistema de Soporte a la Decisión Clínica , ya que permite introducir los parámetros de una nueva paciente para obtener una estimación personalizada de la RCP.
+
+El software se ha desplegado de forma independiente en una infraestructura en la nube.
+
+-   **Denominación del sistema:** BioCalc (v1.0)
+
+-   **Plataforma de acceso:** [Abrir BioCalc en una nueva ventana](https://antonio-sanchez-uma.shinyapps.io/biocalc/)
+
+A continuación, se incrusta el contenedor en vivo conectado directamente con el servidor de producción. La interfaz gráfica permite modificar las dimensiones del tumor y el resto de variables, de manera que recalcula instantáneamente los porcentajes predictivos y emite alertas de seguridad ante la selección de antibióticos.
+
+```{r}
+#| out-width: "100%"
+knitr::include_url("https://antonio-sanchez-uma.shinyapps.io/biocalc/", height = "1100px")
+```

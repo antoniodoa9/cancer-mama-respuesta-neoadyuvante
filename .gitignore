@@ -3,3 +3,6 @@ rsconnect/
 *.xlsx
 .Rhistory
 .RData
+*_cache/
+*_files/
+datos/

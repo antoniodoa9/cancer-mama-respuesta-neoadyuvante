@@ -8,6 +8,8 @@ Lo hemos hecho como práctica individual de **Minería de Datos** del Grado en I
 
 **Informe completo:** [antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante](https://antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante/) (con todo el código R desplegable).
 
+**Aplicación BioCalc en línea:** [antonio-sanchez-uma.shinyapps.io/biocalc](https://antonio-sanchez-uma.shinyapps.io/biocalc/)
+
 ![Curva ROC del mejor modelo](figuras/curva_roc_mejor_modelo.png)
 
 ## Qué hemos hecho
@@ -28,13 +30,26 @@ Lo hemos hecho como práctica individual de **Minería de Datos** del Grado en I
 
 ![RCP según el uso de antibióticos](figuras/rcp_segun_antibioticos.png)
 
+## BioCalc
+
+La aplicación permite introducir el tamaño del tumor, la edad, el estadio, el fenotipo y el resto de variables del modelo, y devuelve la probabilidad estimada de RCP junto con un aviso sobre el efecto de los antibióticos.
+
+![Aplicación BioCalc](figuras/biocalc_app.png)
+
 ## Estructura del repositorio
 
 ```
-index.html            informe completo en HTML (Quarto), con el código R desplegable
-figuras/              gráficas del informe
+InformeMineria.qmd    código fuente del informe (Quarto + R)
+index.html            informe completo ya renderizado en HTML, con el código R desplegable
+figuras/              gráficas del informe y captura de BioCalc
 biocalc_shiny/app.R   código de la aplicación Shiny BioCalc
 ```
+
+## Cómo reproducirlo
+
+1. Instalar R, RStudio (o Quarto) y los paquetes que se cargan al principio del informe (`readxl`, `dplyr`, `ggplot2`, `patchwork`, `mice`, `MASS`, `caret`, `pROC`, `glmnet`, `e1071`, `randomForest` y `rpart`).
+2. Copiar el fichero de datos `muestra_700_UGC_perdidos.xlsx` en una carpeta `datos/` junto al `.qmd` (los datos no están en el repositorio, ver más abajo).
+3. Renderizar `InformeMineria.qmd` con el botón *Render* de RStudio o con `quarto render InformeMineria.qmd`. Al final se genera también `modelo_rcp.rds`, que es el modelo que usa BioCalc.
 
 ## Datos
 
