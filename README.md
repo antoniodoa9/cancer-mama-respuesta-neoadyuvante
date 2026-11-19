@@ -4,6 +4,8 @@ Análisis de minería de datos sobre una cohorte clínica de pacientes con cánc
 
 *Data mining study in R on a breast cancer cohort: does antibiotic use during neoadjuvant chemotherapy affect pathological complete response? Includes cleaning and multiple imputation, inferential analysis, logistic regression, model comparison with nested cross-validation and an R Shiny app.*
 
+🇬🇧 **English version:** [read it below](#english-version)
+
 Lo hemos hecho como práctica individual de **Minería de Datos** del Grado en Ingeniería de la Salud (Universidad de Málaga, junio de 2026).
 
 **Informe completo:** [antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante](https://antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante/) (con todo el código R desplegable).
@@ -60,5 +62,53 @@ Los datos son de una cohorte clínica real cedida a la asignatura y **no se publ
 Es un trabajo académico y BioCalc no está validado clínicamente: no debe usarse para tomar decisiones médicas.
 
 ## Autor
+
+Antonio Sánchez Doña.
+
+---
+
+## English version
+
+Data mining analysis of a clinical cohort of breast cancer patients, to study whether antibiotic use during neoadjuvant chemotherapy affects **pathological complete response (pCR)**. The work goes from data cleaning to a predictive model deployed as a web app (BioCalc).
+
+This was an individual assignment for **Data Mining** in the Health Engineering degree (University of Málaga, June 2026).
+
+**Full report:** [antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante](https://antoniodoa9.github.io/cancer-mama-respuesta-neoadyuvante/) (with all the R code, which can be expanded). **BioCalc app online:** [antonio-sanchez-uma.shinyapps.io/biocalc](https://antonio-sanchez-uma.shinyapps.io/biocalc/)
+
+### What we did
+
+1. **Univariate analysis** of each variable and detection of anomalous values (such as 999 codes).
+2. **Cleaning and multiple imputation** of missing values with `mice`, plus recoding and discretisation of the variables.
+3. **Bivariate analysis** with hypothesis tests between each variable and pCR.
+4. **Logistic regression** with stepwise variable selection, comparing complete cases with imputed data.
+5. **Predictive model**: repeated hold-out, exhaustive search of variable combinations, ROC curve and k-fold cross-validation.
+6. **Algorithm comparison** (regularised regression, SVM, Random Forest, decision trees and Naive Bayes) with 5x2 nested cross-validation.
+7. **Deployment** of the final model in an R Shiny app, BioCalc, which estimates the probability of pCR for a new patient.
+
+### Main results
+
+- Patients who did **not** take antibiotics reached pCR in **48.1 %** of cases, compared with **38 %** of those who did (p = 0.011).
+- Antibiotic use remains a factor that lowers the probability of pCR in the multivariable model too, together with stage, tumour size, age and phenotype.
+- SVM, regularised regression and Random Forest perform almost the same, with an AUC above 0.75. The simple decision tree comes last (AUC = 0.713).
+
+### BioCalc
+
+The app lets you enter the tumour size, age, stage, phenotype and the rest of the model variables, and returns the estimated probability of pCR together with a note on the effect of antibiotics.
+
+### How to reproduce it
+
+1. Install R, RStudio (or Quarto) and the packages loaded at the start of the report (`readxl`, `dplyr`, `ggplot2`, `patchwork`, `mice`, `MASS`, `caret`, `pROC`, `glmnet`, `e1071`, `randomForest` and `rpart`).
+2. Copy the data file `muestra_700_UGC_perdidos.xlsx` into a `datos/` folder next to the `.qmd` (the data are not in the repository, see below).
+3. Render `InformeMineria.qmd` with the *Render* button in RStudio or with `quarto render InformeMineria.qmd`. At the end it also creates `modelo_rcp.rds`, which is the model BioCalc uses.
+
+### Data
+
+The data come from a real clinical cohort shared with the course and **are not published**. The repository only contains the report with aggregated results (summaries, plots and models), the code and the app. For the same reason the trained model (`modelo_rcp.rds`) is not included, because it stores the training data inside; to run BioCalc you first need to create it with the report code.
+
+### Disclaimer
+
+This is an academic project and BioCalc is not clinically validated: it must not be used to make medical decisions.
+
+### Author
 
 Antonio Sánchez Doña.
